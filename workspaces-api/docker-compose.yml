@@ -1,0 +1,76 @@
+services:
+  api:
+    build: .
+    container_name: workspaces-api
+    security_opt:
+      - label=type:container_runtime_t 
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:rw 
+      - /root/.docker:/root/.docker:ro
+      - ./workspaces-sessions:/opt/workspaces-api/workspaces-sessions:shared
+    environment:
+      - DOMAIN=workspaces.domain.local
+      - GITEA_REGISTRY=gitea.domain.local:3002/homelab/workspaces
+      - GITEA_URL=gitea.domain.local:3002
+      - SECRET_KEY= 
+      - GITEA_USERNAME=
+      - GITEA_PASSWORD=
+      - PYTHONUNBUFFERED=1
+    networks:
+      - proxy
+      
+  authentik-outpost:
+    image: ghcr.io/goauthentik/proxy:2025.4.0
+    container_name: workspaces-authentik-outpost
+    restart: unless-stopped
+    volumes:
+      - ./authentik/outpost.yaml:/data/outpost.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - proxy
+    environment:
+      AUTHENTIK_HOST: "https://authentik.domain.local/"
+      AUTHENTIK_TOKEN: <BLANK>
+      AUTHENTIK_INSECURE: "true"
+      AUTHENTIK_SECRET_KEY: <BLANK>
+    ports:
+      - "9000:9000"
+      
+  traefik:
+    image: traefik:v3.6.5
+    container_name: workspaces-traefik
+    depends_on:
+      - authentik-outpost
+      - api
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports: ["80:80", "443:443", "8080:8080"]
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./traefik/acme.json:/acme.json"
+      - "./traefik/certs:/certs:ro"
+      - "./traefik/dynamic:/etc/traefik/dynamic:ro"
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.network=proxy"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entryPoints.websecure.http.tls=true"
+      - "--log.level=DEBUG"
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      - "--serversTransport.insecureSkipVerify=true"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: false
+

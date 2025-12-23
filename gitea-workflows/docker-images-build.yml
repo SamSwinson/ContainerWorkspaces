@@ -1,0 +1,63 @@
+name: Build Images
+
+on: 
+  push:
+    paths:
+      - 'images/**'
+
+jobs:
+  build:
+    runs-on: WORKSPACES01
+
+    steps:
+      - name: Checkout
+        uses: https://gitea.domain.local:3002/Public/checkout@v4
+
+      - name: Detect changed dockerfiles under images/
+        id: diff
+        run: |
+          git fetch --depth=2 origin "${GITHUB_REF_NAME}"
+          CHANGED="$(git diff --name-only HEAD^ HEAD | grep '^images/dockerfile-' || true)"
+          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: https://gitea.domain.local:3002/Public/setup-buildx-action@v3
+        with:
+          config-inline: |
+            [registry."gitea.domain.local:3002"]
+              ca = ["/etc/pki/ca-trust/source/anchors/NOC01CA01.cer"]
+              http = false
+
+      - name: Login to registry
+        uses: https://gitea.domain.local:3002/Public/login-action@v3
+        with:
+          registry: gitea.domain.local:3002
+          username: ${{ secrets.REGISTRY_ACTOR }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Build and push changed images
+        if: ${{ steps.diff.outputs.changed_files != '' }}
+        run: |
+          set -e
+          echo "Changed dockerfiles:"
+          echo "${{ steps.diff.outputs.changed_files }}"
+
+          while read -r dockerfile; do
+            [ -z "$dockerfile" ] && continue
+
+            base="$(basename "$dockerfile")"
+            image_suffix="${base#dockerfile-workspaces-}"
+
+            echo "Building $dockerfile as $image_suffix"
+
+            docker buildx build \
+              --file "$dockerfile" \
+              --tag "gitea.domain.local:3002/homelab/workspaces/${image_suffix}:latest" \
+              --push \
+              "$(dirname "$dockerfile")"
+          done <<< "${{ steps.diff.outputs.changed_files }}"
+
+      - name: Cleanup
+        run: docker system prune -a -f --volumes

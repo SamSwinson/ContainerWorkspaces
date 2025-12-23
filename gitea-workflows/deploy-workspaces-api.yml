@@ -1,0 +1,38 @@
+name: Deploy Workspaces API
+
+on:
+  push:
+    paths:
+      - 'workspaces-api/**'
+
+jobs:
+  deploy:
+    runs-on: WORKSPACES01
+    steps:
+      - name: Checkout code
+        uses: https://gitea.domain.local:3002/Public/checkout@v4
+
+      - name: Remove /opt/workspaces
+        run: |
+          sudo rm -Rf /opt/workspaces
+
+      - name: Copy files to /opt/workspaces
+        run: |
+          sudo mkdir -p /opt/workspaces
+          sudo mkdir -p /opt/workspaces/workspaces-sessions
+          sudo cp -r workspaces-api/* /opt/workspaces/
+          sudo chmod 755 /opt/workspaces/traefik/dynamic
+
+
+      - name: Set SELinux context for Traefik certs and sessions
+        run: |
+          sudo chcon -Rt svirt_sandbox_file_t /opt/workspaces/traefik/certs
+          sudo chcon -Rt svirt_sandbox_file_t /opt/workspaces/traefik/dynamic
+          sudo chcon -Rt svirt_sandbox_file_t /opt/workspaces/workspaces-sessions
+
+      - name: Build and deploy with docker-compose
+        run: |
+          cd /opt/workspaces
+          sudo docker-compose build
+          sudo docker-compose down
+          sudo docker-compose up -d
